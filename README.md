@@ -1,5 +1,5 @@
 # NLP_web_API
-main API url: http://120.25.227.214:5001
+
 
 predict method (POST requests): http://120.25.227.214:5001/nlp_return/predict
 
