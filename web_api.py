@@ -81,4 +81,4 @@ def server_error(e):
 
 if __name__ == '__main__':
     classifier = SentenceClassifier(model_path='./sen_analysis')
-    app.run(port=5000)
+    app.run(host='0.0.0.0',port=5001)
