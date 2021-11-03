@@ -18,9 +18,13 @@ comment_time_end
 
 table name
 
+
+
+
+
 predict method (POST requests): server_IP:50001/nlp_return/predict
 
-returns predictions.
+returns predictions on comments.
 
 
 word_freq method (POST requests): server_IP:50001/nlp_return/word_freq
