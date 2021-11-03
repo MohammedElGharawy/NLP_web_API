@@ -4,6 +4,7 @@ import pandas as pd
 import ernie
 from ernie import SentenceClassifier
 from flask import Flask, jsonify, request
+import pymysql
 
 app = Flask(__name__)
 
@@ -11,9 +12,27 @@ app = Flask(__name__)
 @app.route('/nlp_return/predict', methods=['POST'])
 def predict():
     try:
-        dataset = request.json
+        conn = pymysql.connect(host='120.79.99.107', port=3306, user='test', password='up2china', database='accountadmin')
 
-        data = pd.DataFrame(dataset)
+        sku_id = request.args.get('sku_id')
+        customer = request.args.get('customer')
+        comment_time_start = request.args.get('comment_time_start')
+        comment_time_end = request.args.get('comment_time_end')
+        table_name = request.args.get('table_name')
+
+        if sku_id == '':
+            query = 'select content from ' + str(table_name) + ' where customer = ' + str(
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
+        else:
+            query = 'select content from ' + str(table_name) + ' where sku_id = ' + str(
+                sku_id) + ' AND customer = ' + str(
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
+
+        results = pd.read_sql_query(query, conn)
+
+        data = results
         data = data.filter(['content'], axis=1)
         chinese_text = data['content'].to_list()
         predictions = classifier.predict(chinese_text)
@@ -37,18 +56,40 @@ def predict():
 @app.route('/nlp_return/word_freq', methods=['POST'])
 def word_freq():
     try:
-        dataset = request.json
+        conn = pymysql.connect(host='120.79.99.107', port=3306, user='test', password='up2china', database='accountadmin')
+
+        sku_id = request.args.get('sku_id')
+        customer = request.args.get('customer')
+        comment_time_start = request.args.get('comment_time_start')
+        comment_time_end = request.args.get('comment_time_end')
+        table_name = request.args.get('table_name')
+
+        if sku_id == '':
+            query = 'select content , has_negtv from ' + str(table_name) + ' where customer = ' + str(
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
+        else:
+            query = 'select content , has_negtv from ' + str(table_name) + ' where sku_id = ' + str(
+                sku_id) + ' AND customer = ' + str(
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
+
+
+
+        results = pd.read_sql_query(query, conn)
+
         # filtering
-        data = pd.DataFrame(dataset)
+        data = results
         data = data.filter(['content', 'has_negtv'], axis=1)
 
+
         # negative
-        negative_comments_dataset = data.query("has_negtv == True")
+        negative_comments_dataset = data.query("has_negtv == 'true'")
         neg_text_list = list(negative_comments_dataset["content"])
         neg = adv.word_frequency(neg_text_list)[:20]
 
         # positive
-        positive_comments_dataset = data.query("has_negtv == False")
+        positive_comments_dataset = data.query("has_negtv == 'false'")
         pos_text_list = list(positive_comments_dataset["content"])
         pos = adv.word_frequency(pos_text_list)[:20]
 
@@ -81,4 +122,4 @@ def server_error(e):
 
 if __name__ == '__main__':
     classifier = SentenceClassifier(model_path='./sen_analysis')
-    app.run(host='0.0.0.0',port=5001)
+    app.run(host='0.0.0.0', port=50001)
