@@ -1,5 +1,9 @@
 import traceback
-import advertools as adv
+import numpy as np
+import itertools
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
 import jieba
 import pandas as pd
 import ernie
@@ -24,15 +28,13 @@ def predict():
 
         if sku_id == '':
             query = 'select content from ' + str(table_name) + ' where customer = ' + str(
-                customer)
-            # + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
-            # comment_time_end) + "'"
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
         else:
             query = 'select content from ' + str(table_name) + ' where sku_id = ' + str(
                 sku_id) + ' AND customer = ' + str(
-                customer)
-            # + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
-            # comment_time_end) + "'"
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
 
         results = pd.read_sql_query(query, conn)
 
@@ -57,6 +59,32 @@ def predict():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()})
 
 
+def mmr(doc_embedding, word_embeddings, words, top_n, diversity):
+    # Extract similarity within words, and between words and the document
+    word_doc_similarity = cosine_similarity(word_embeddings, doc_embedding)
+    word_similarity = cosine_similarity(word_embeddings)
+
+    # Initialize candidates and already choose best keyword/keyphras
+    keywords_idx = [np.argmax(word_doc_similarity)]
+    candidates_idx = [i for i in range(len(words)) if i != keywords_idx[0]]
+
+    for _ in range(top_n - 1):
+        # Extract similarities within candidates and
+        # between candidates and selected keywords/phrases
+        candidate_similarities = word_doc_similarity[candidates_idx, :]
+        target_similarities = np.max(word_similarity[candidates_idx][:, keywords_idx], axis=1)
+
+        # Calculate MMR
+        Mmr = (1 - diversity) * candidate_similarities - diversity * target_similarities.reshape(-1, 1)
+        mmr_idx = candidates_idx[np.argmax(Mmr)]
+
+        # Update keywords & candidates
+        keywords_idx.append(mmr_idx)
+        candidates_idx.remove(mmr_idx)
+
+    return [words[idx] for idx in keywords_idx]
+
+
 @app.route('/nlp_return/word_freq', methods=['POST'])
 def word_freq():
     try:
@@ -71,22 +99,21 @@ def word_freq():
 
         if sku_id == '':
             query = 'select content , has_negtv from ' + str(table_name) + ' where customer = ' + str(
-                customer)
-            # + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
-            # comment_time_end) + "'"
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
+
         else:
             query = 'select content , has_negtv from ' + str(table_name) + ' where sku_id = ' + str(
                 sku_id) + ' AND customer = ' + str(
-                customer)
-            # + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
-            # comment_time_end) + "'"
+                customer) + ' AND comment_time between ' + "'" + str(comment_time_start) + "'" + 'and ' + "'" + str(
+                comment_time_end) + "'"
 
         results = pd.read_sql_query(query, conn)
 
         # filtering
         data = results
         data = data.filter(['content', 'has_negtv'], axis=1)
-        stop_words = ["、", " ", "n", "。", "〈", "〉", "《", "》", "一", "一个", "一些", "一何", "一切", "一则", "一方面", "一旦",
+        stop_words = ["、", " ", "n", "。", "〈", "〉", "《", "》", "一", "一个", "一些", "一何", "一切", "一则", "一方面", "啊", "一旦",
                       "一来", "一样", "一种", "一般", "一转眼", "七", "万一", "三", "上", "上下", "下", "不", "不仅", "不但", "不光", "不单", "不只",
                       "不外乎", "不如", "不妨", "不尽", "不尽然", "不得", "不怕", "不惟", "不成", "不拘", "不料", "不是", "不比", "不然", "不特", "不独",
                       "不管", "不至于", "不若", "不论", "不过", "不问", "与", "与其", "与其说", "与否", "与此同时", "且", "且不说", "且说", "两者", "个",
@@ -137,28 +164,36 @@ def word_freq():
                       "；", "＜", "＞", "？", "＠", "［", "］", "｛", "｜", "｝", "～", "￥"]
 
         # negative
-        negative_comments_dataset = data.query("has_negtv == 'true'")
-        neg_text_list = list(negative_comments_dataset["content"])
-        neg_text_list = jieba.cut(str(neg_text_list), cut_all=False)
-        neg_list = []
-        for i in neg_text_list:
-            if i not in stop_words:
-                neg_list.append(i)
-        neg = adv.word_frequency(neg_list, phrase_len=1, rm_words=adv.stopwords["chinese"])[1:30]
+        # negative_comments_dataset = data.query("has_negtv == 'true'")
+        # neg_text_list = list(negative_comments_dataset["content"])
+        # neg_list = []
+        # for i in neg_text_list:
+        #    if i not in stop_words:
+        #        neg_list.append(i)
+        # neg = adv.word_frequency(neg_list, phrase_len=2, rm_words=stop_words)[1:30]
 
         # positive
         positive_comments_dataset = data.query("has_negtv == 'false'")
         pos_text_list = list(positive_comments_dataset["content"])
-        pos_text_list = jieba.cut(str(pos_text_list), cut_all=False)
-        pos_list = []
+        swap = []
         for i in pos_text_list:
-            if i not in stop_words:
-                pos_list.append(i)
-        pos = adv.word_frequency(pos_list, phrase_len=1, rm_words=adv.stopwords["chinese"])[1:30]
-
+            swap_tmp = jieba.cut(str(i), cut_all=False)
+            swap_next = []
+            for j in swap_tmp:
+                if j not in stop_words:
+                    swap_next.append(j)
+            swap.append(str(swap_next))
+        pos_list = swap
+        n_gram_range = (1, 2)
+        # Extract candidate words/phrases
+        count = CountVectorizer(ngram_range=n_gram_range, stop_words=stop_words).fit([str(pos_list)])
+        candidates = count.get_feature_names()
+        doc_embedding = model.encode([str(pos_list)])
+        candidate_embeddings = model.encode(candidates)
+        pos = mmr(doc_embedding, candidate_embeddings, candidates, top_n=10, diversity=0.25)
         freq = pd.DataFrame()
-        freq["Negative"] = neg["word"]
-        freq["Positive"] = pos["word"]
+        # freq["Negative"] = neg["word"]
+        freq["Positive"] = pos
         freq = freq.to_json(force_ascii=False)
 
         return freq
@@ -185,4 +220,5 @@ def server_error(e):
 
 if __name__ == '__main__':
     classifier = SentenceClassifier(model_path='./sen_analysis')
+    model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
     app.run(host='0.0.0.0', port=5000)
